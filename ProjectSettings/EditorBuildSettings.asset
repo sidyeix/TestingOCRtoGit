@@ -1,0 +1,22 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1045 &1
+EditorBuildSettings:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Scenes:
+  - enabled: 1
+    path: Assets/Scenes/MainMenu.unity
+    guid: 107fef2394934f548886baed3e33b7ca
+  - enabled: 1
+    path: Assets/Scenes/ScanOCR.unity
+    guid: 06de7b59885bfbc40a8285731392e76c
+  - enabled: 1
+    path: Assets/Scenes/GameUI.unity
+    guid: 8966d834627347f49a3a2521c2d34da0
+  - enabled: 1
+    path: Assets/Scenes/Battleplay.unity
+    guid: c5a72a64512646f46a4859a5540f7bd5
+  m_configObjects:
+    com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
+  m_UseUCBPForAssetBundles: 0

@@ -1,0 +1,40 @@
+# === Unity generated folders ===
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+UserSettings/
+
+# Exports / backups you mentioned
+UnityAndroidExport/
+nutriappBackUpThisFolder_ButDontShip*/
+NutriOCR_BurstDebugInformation_DoNotShip*/
+
+# Visual Studio / Rider
+.vscode/
+.vs/
+*.csproj
+*.sln
+*.suo
+*.user
+*.unityproj
+*.pidb
+*.userprefs
+*.booproj
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Misc
+*.apk
+*.aab
+*.exe
+*.app
+*.unitypackage
+
+# Ignore local build caches
+*.cache
