@@ -11,10 +11,18 @@ public class CharacterStatus : MonoBehaviour
     public Slider healthSlider;
     public TMP_Text healthText;
 
+    [Header("Animation")]
+    public Animator animator;  // 👈 Add this
+
+    private bool isDead = false;
+
     void Start()
     {
         currentHealth = maxHealth;
         UpdateUI();
+
+        if (animator != null)
+        animator.SetTrigger("Idle");
     }
 
     public void TakeDamage(int amount)
@@ -22,6 +30,19 @@ public class CharacterStatus : MonoBehaviour
         currentHealth -= amount;
         currentHealth = Mathf.Max(currentHealth, 0);
         UpdateUI();
+
+        if (animator != null)
+        {
+            if (currentHealth <= 0)
+            {
+                isDead = true;
+                animator.SetTrigger("Death");
+            }
+            else
+            {
+                animator.SetTrigger("Hit");
+            }
+        }
     }
 
     public void Heal(int amount)
@@ -43,5 +64,11 @@ public class CharacterStatus : MonoBehaviour
     public bool IsDead()
     {
         return currentHealth <= 0;
+    }
+
+    public void PlayAction(string action)
+    {
+        if (animator == null || isDead) return;
+        animator.SetTrigger(action);
     }
 }

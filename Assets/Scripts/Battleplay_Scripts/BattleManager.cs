@@ -26,6 +26,7 @@ public class BattleManager : MonoBehaviour
     public TMP_Text cooldownText;
     public TMP_Text playerHealthText;
     public TMP_Text npcHealthText;
+    public TMP_Text passButtonText;
 
     [Header("Result Panel")]
     public GameObject resultPanel;
@@ -43,12 +44,6 @@ public class BattleManager : MonoBehaviour
     public float criticalMultiplier = 1.5f;
     public int attackThresholdForCritical = 3;
 
-    [Header("Vibration Settings")]
-    public bool vibrationsEnabled = true;
-    public float lightVibrationDuration = 0.1f;
-    public float mediumVibrationDuration = 0.2f;
-    public float heavyVibrationDuration = 0.3f;
-
     [Header("Audio Settings")]
     public AudioSource backgroundMusicSource;
     public AudioSource sfxSource;
@@ -59,14 +54,23 @@ public class BattleManager : MonoBehaviour
     public AudioClip damageTakenSound;
     public AudioClip damageBlockedSound;
 
-    [Header("Screen Shake Settings")]
-    public bool screenShakeEnabled = true;
-    public float shakeDuration = 0.3f;
-    public float shakeIntensity = 0.2f;
-
     [Header("Button Animations")]
     public float buttonScaleMultiplier = 1.1f;
     public float buttonScaleDuration = 0.1f;
+
+    [Header("Animation Timing (seconds)")]
+    public float attackAnimDuration = 1.1f;     // approx duration of attack animation
+    public float blockAnimDuration = 0.7f;      // approx duration of block animation
+    public float hitAnimDuration = 0.6f;        // duration of hit reaction
+    public float interActionDelay = 0.25f;      // small gap between actions
+
+    [Header("Advanced Balance Systems")]
+    public float defenseMitigationFactor = 0.6f;   // lower = stronger defense, affects diminishing returns
+    public int playerSpeed = 5;                    // higher = faster
+    public int npcSpeed = 4;
+    public TMP_Text feedbackText;                  // assign in Canvas (for messages like "Press End Turn to proceed")
+    private int consecutivePlayerAttacks = 0;      // used for weighted crit
+    private int consecutiveNPCAttacks = 0;
 
     private int currentEnergy;
     private int npcEnergy;
@@ -82,6 +86,9 @@ public class BattleManager : MonoBehaviour
     private bool canAssign = true;
     private Coroutine currentTimerCoroutine;
     private bool isProcessingTurn = false;
+
+    public string passLabel = "Pass";
+    public string endTurnLabel = "End Turn";
 
     void Start()
     {
@@ -113,7 +120,6 @@ public class BattleManager : MonoBehaviour
         passButton.onClick.AddListener(() => OnAssignButton("Pass"));
         resetButton.onClick.AddListener(ResetAssignments);
 
-        // Setup audio
         SetupAudio();
         
         resultPanel.SetActive(false);
@@ -125,7 +131,6 @@ public class BattleManager : MonoBehaviour
 
     void SetupAudio()
     {
-        // Setup background music
         if (backgroundMusicSource != null && backgroundMusic != null)
         {
             backgroundMusicSource.clip = backgroundMusic;
@@ -133,13 +138,11 @@ public class BattleManager : MonoBehaviour
             backgroundMusicSource.Play();
         }
         
-        // Add button click sounds to all battle buttons
         AddButtonClickSounds();
     }
 
     void AddButtonClickSounds()
     {
-        // Only add to our main battle buttons
         Button[] battleButtons = new Button[] { attackButton, defendButton, passButton, resetButton, confirmButton };
         
         foreach (Button button in battleButtons)
@@ -162,51 +165,6 @@ public class BattleManager : MonoBehaviour
         }
     }
 
-    IEnumerator ScreenShake()
-    {
-        if (!screenShakeEnabled) yield break;
-        
-        // Get the camera more reliably
-        Camera mainCamera = Camera.main;
-        if (mainCamera == null)
-        {
-            // Fallback: find any camera in the scene
-            mainCamera = FindAnyObjectByType<Camera>();
-            if (mainCamera == null) yield break;
-        }
-        
-        Transform cameraTransform = mainCamera.transform;
-        Vector3 originalPosition = cameraTransform.localPosition;
-        float elapsed = 0f;
-
-        while (elapsed < shakeDuration)
-        {
-            // Use Perlin noise for smoother, more natural shake
-            float x = Mathf.PerlinNoise(Time.time * 10f, 0f) * 2f - 1f;
-            float y = Mathf.PerlinNoise(0f, Time.time * 10f) * 2f - 1f;
-            
-            x *= shakeIntensity;
-            y *= shakeIntensity;
-            
-            cameraTransform.localPosition = originalPosition + new Vector3(x, y, 0);
-            
-            elapsed += Time.deltaTime;
-            yield return null;
-        }
-        
-        // Smoothly return to original position
-        float returnTime = 0f;
-        Vector3 currentPosition = cameraTransform.localPosition;
-        while (returnTime < 0.1f)
-        {
-            cameraTransform.localPosition = Vector3.Lerp(currentPosition, originalPosition, returnTime / 0.1f);
-            returnTime += Time.deltaTime;
-            yield return null;
-        }
-        
-        cameraTransform.localPosition = originalPosition;
-    }
-
     IEnumerator AnimateButton(Button button)
     {
         if (button == null) yield break;
@@ -217,7 +175,6 @@ public class BattleManager : MonoBehaviour
         Vector3 originalScale = rectTransform.localScale;
         Vector3 targetScale = originalScale * buttonScaleMultiplier;
 
-        // Scale up
         float elapsed = 0f;
         while (elapsed < buttonScaleDuration)
         {
@@ -226,7 +183,6 @@ public class BattleManager : MonoBehaviour
             yield return null;
         }
 
-        // Scale down
         elapsed = 0f;
         while (elapsed < buttonScaleDuration)
         {
@@ -269,6 +225,14 @@ public class BattleManager : MonoBehaviour
             timerText.text = $"Time: {Mathf.CeilToInt(timeLeft)}";
             yield return null;
             timeLeft -= Time.deltaTime;
+        }
+
+        if (feedbackText != null)
+        {
+            if (currentEnergy > 0 && (playerAttack + playerDefend) < startingEnergy)
+                feedbackText.text = "Tip: You can press 'End Turn' to proceed early.";
+            else
+                feedbackText.text = "";
         }
 
         timerText.text = "Time: 0";
@@ -316,11 +280,11 @@ public class BattleManager : MonoBehaviour
         playerAttack++;
         currentEnergy--;
         
-        // Button animation
         StartCoroutine(AnimateButton(attackButton));
         
         UpdateUI();
         CheckAutoProceed();
+        UpdatePassButtonLabel();
     }
 
     void AssignDefend()
@@ -330,25 +294,36 @@ public class BattleManager : MonoBehaviour
         playerDefend++;
         currentEnergy--;
         
-        // Button animation
         StartCoroutine(AnimateButton(defendButton));
         
         UpdateUI();
         CheckAutoProceed();
+        UpdatePassButtonLabel();
     }
 
     void AssignPass()
     {
-        playerPassed = true;
-        canAssign = false;
-        
-        if (currentTimerCoroutine != null)
+        if (!canAssign || isProcessingTurn) return;
+
+        // If player already acted, treat as End Turn
+        if (playerAttack > 0 || playerDefend > 0)
         {
-            StopCoroutine(currentTimerCoroutine);
+            canAssign = false;
+            if (currentTimerCoroutine != null) StopCoroutine(currentTimerCoroutine);
+            StartCoroutine(ProceedAfterAutoAssign());
+            feedbackText.text = "";
         }
-        
+        else
+        {
+            // True manual pass
+            playerPassed = true;
+            canAssign = false;
+            if (currentTimerCoroutine != null) StopCoroutine(currentTimerCoroutine);
+            StartCoroutine(ProceedAfterPass());
+            if (feedbackText != null) feedbackText.text = "You passed your turn.";
+        }
+
         UpdateUI();
-        StartCoroutine(ProceedAfterPass());
     }
 
     IEnumerator ProceedAfterPass()
@@ -414,8 +389,9 @@ public class BattleManager : MonoBehaviour
         playerAttack = 0;
         playerDefend = 0;
         playerPassed = false;
-        
+
         UpdateUI();
+        UpdatePassButtonLabel();
     }
 
     IEnumerator EvaluateTurn()
@@ -423,18 +399,139 @@ public class BattleManager : MonoBehaviour
         isProcessingTurn = true;
         phaseText.text = "Phase: Evaluating";
 
+        // Decide NPC actions first
         GenerateNPCActions();
 
+        // Update assigned UI
         playerAssignedText.text = playerPassed ? "Player Passed" : $"Attack: {playerAttack} | Defend: {playerDefend}";
         npcAssignedText.text = npcPassed ? "NPC Passed" : $"Attack: {npcAttack} | Defend: {npcDefend}";
 
-        yield return new WaitForSeconds(1f);
+        // Small anticipation delay
+        yield return new WaitForSeconds(0.6f);
 
-        CalculateAndApplyDamage();
+        if (!playerPassed && playerAttack > 0 && !npcPassed && npcAttack > 0)
+        {
+            if (playerSpeed >= npcSpeed)
+            {
+                yield return StartCoroutine(PerformAttack(player, npc, playerAttack, npcDefend));
+                yield return new WaitForSeconds(interActionDelay);
+                yield return StartCoroutine(PerformAttack(npc, player, npcAttack, playerDefend));
+            }
+            else
+            {
+                yield return StartCoroutine(PerformAttack(npc, player, npcAttack, playerDefend));
+                yield return new WaitForSeconds(interActionDelay);
+                yield return StartCoroutine(PerformAttack(player, npc, playerAttack, npcDefend));
+            }
+        }
 
-        yield return new WaitForSeconds(1f);
+        // CASE: Player attack, NPC defend -> simultaneous
+        else if (!playerPassed && playerAttack > 0 && !npcPassed && npcDefend > 0)
+        {
+            yield return StartCoroutine(PerformSimultaneous(player, npc, playerAttack, npcDefend, true));
+        }
+        // CASE: NPC attack, Player defend -> simultaneous
+        else if (!npcPassed && npcAttack > 0 && !playerPassed && playerDefend > 0)
+        {
+            yield return StartCoroutine(PerformSimultaneous(npc, player, npcAttack, playerDefend, false));
+        }
+        // CASE: Player defends & NPC defends -> both block pose
+        else if (!playerPassed && playerDefend > 0 && !npcPassed && npcDefend > 0)
+        {
+            player.PlayAction("Block");
+            npc.PlayAction("Block");
+            yield return new WaitForSeconds(blockAnimDuration);
+        }
+        // CASE: Only player acts (npc passed)
+        else if (!playerPassed && (playerAttack > 0 || playerDefend > 0) && npcPassed)
+        {
+            if (playerAttack > 0)
+                yield return StartCoroutine(PerformAttack(player, npc, playerAttack, npcDefend));
+            else
+            {
+                player.PlayAction("Block");
+                yield return new WaitForSeconds(blockAnimDuration);
+            }
+        }
+        // CASE: Only npc acts (player passed)
+        else if (!npcPassed && (npcAttack > 0 || npcDefend > 0) && playerPassed)
+        {
+            if (npcAttack > 0)
+                yield return StartCoroutine(PerformAttack(npc, player, npcAttack, playerDefend));
+            else
+            {
+                npc.PlayAction("Block");
+                yield return new WaitForSeconds(blockAnimDuration);
+            }
+        }
+        // CASE: Neither acted / both passed - no animations; just continue
 
+        // small settle delay
+        yield return new WaitForSeconds(0.35f);
+
+        UpdateHealthUI();
         isProcessingTurn = false;
+    }
+
+    IEnumerator PerformAttack(CharacterStatus attacker, CharacterStatus target, int attackValue, int targetDefense)
+    {
+        // Play attack animation
+        attacker.PlayAction("Attack");
+
+        // Wait roughly the attack animation length (tweak attackAnimDuration in inspector)
+        yield return new WaitForSeconds(attackAnimDuration);
+
+        // Calculate and apply damage
+        int damage = CalculateDamage(attackValue, targetDefense, attacker.gameObject.name);
+
+        if (damage > 0)
+        {
+            target.TakeDamage(damage);
+            target.PlayAction("Hit");                    // play hit reaction on target
+            PlaySFX(damageTakenSound);
+        }
+        else
+        {
+            // No damage dealt -> played blocked sound and block pose
+            if (targetDefense > 0 && damageBlockedSound != null)
+                PlaySFX(damageBlockedSound);
+
+            target.PlayAction("Block");
+        }
+
+        // Wait a short time so reactions finish before next action
+        yield return new WaitForSeconds(hitAnimDuration);
+    }
+
+    IEnumerator PerformSimultaneous(CharacterStatus attacker, CharacterStatus defender, int attackValue, int defendValue, bool attackerIsPlayer)
+    {
+        // Start both animations at roughly same time
+        attacker.PlayAction("Attack");
+        defender.PlayAction("Block");
+
+        // Allow overlap (choose a value slightly shorter than full attack to show reaction)
+        float overlapWait = Mathf.Min(attackAnimDuration, blockAnimDuration);
+        yield return new WaitForSeconds(overlapWait);
+
+        // Resolve damage from attacker to defender
+        int damage = CalculateDamage(attackValue, defendValue, attacker.gameObject.name);
+
+        if (damage > 0)
+        {
+            defender.TakeDamage(damage);
+            defender.PlayAction("Hit");
+            PlaySFX(damageTakenSound);
+
+        }
+        else
+        {
+            if (defendValue > 0 && damageBlockedSound != null)
+                PlaySFX(damageBlockedSound);
+            // defender already played Block above
+        }
+
+        // Allow defender hit/block animation to finish
+        yield return new WaitForSeconds(hitAnimDuration);
     }
 
     void GenerateNPCActions()
@@ -510,17 +607,15 @@ public class BattleManager : MonoBehaviour
             playerDamage = CalculateDamage(playerAttack, npcDefend, "Player");
             npc.TakeDamage(playerDamage);
             Debug.Log($"Player deals {playerDamage} damage to NPC (Player Attack: {playerAttack}, NPC Defend: {npcDefend})");
+
+            if (playerDamage > 0)
+            {
+                npc.PlayAction("Hit");
+            }
             
-            // Play damage blocked sound if NPC defended successfully
             if (playerDamage == 0 && npcDefend > 0 && damageBlockedSound != null)
             {
                 PlaySFX(damageBlockedSound);
-            }
-            
-            // Vibrate when player deals damage
-            if (playerDamage > 0)
-            {
-                Vibrate();
             }
         }
 
@@ -528,30 +623,19 @@ public class BattleManager : MonoBehaviour
         {
             npcDamage = CalculateDamage(npcAttack, playerDefend, "NPC");
             
-            // Play damage taken or blocked sound
             if (npcDamage > 0)
             {
                 player.TakeDamage(npcDamage);
                 Debug.Log($"NPC deals {npcDamage} damage to Player (NPC Attack: {npcAttack}, Player Defend: {playerDefend})");
-                
-                // Debug log to confirm screen shake is called
-                Debug.Log("Screen shake triggered! Damage: " + npcDamage);
-                
-                // Play damage taken sound
+
+                player.PlayAction("Hit");
                 if (damageTakenSound != null)
                 {
                     PlaySFX(damageTakenSound);
                 }
-                
-                // Screen shake when player takes damage
-                StartCoroutine(ScreenShake());
-                
-                // Vibrate when player takes damage
-                Vibrate();
             }
             else if (playerDefend > 0 && damageBlockedSound != null)
             {
-                // Play damage blocked sound
                 PlaySFX(damageBlockedSound);
                 Debug.Log($"Player blocked NPC's attack! (NPC Attack: {npcAttack}, Player Defend: {playerDefend})");
             }
@@ -567,20 +651,39 @@ public class BattleManager : MonoBehaviour
 
     int CalculateDamage(int attack, int defend, string source)
     {
-        int netAttack = Mathf.Max(attack - defend, 0);
-        int damage = netAttack * baseDamage;
+        if (attack <= 0) return 0;
 
-        if (attack >= 3)
+        // --- Speed-based priority logic ---
+        bool isPlayerAttacker = source.Contains("Player");
+        bool attackerFirst = isPlayerAttacker ? playerSpeed >= npcSpeed : npcSpeed >= playerSpeed;
+
+        // --- Defense scaling with diminishing returns ---
+        float effectiveDefense = Mathf.Pow(defend, defenseMitigationFactor);
+        int netAttack = Mathf.Max(0, attack - Mathf.RoundToInt(effectiveDefense));
+        int damage = Mathf.Max(1, netAttack * baseDamage); // at least 1 dmg if attack > 0
+
+        // --- Weighted critical chance (sigmoid growth) ---
+        int consecutive = isPlayerAttacker ? consecutivePlayerAttacks : consecutiveNPCAttacks;
+        float adjustedCritChance = 1f / (1f + Mathf.Exp(-((attack - 2f) + (consecutive * 0.5f)))); // sigmoid curve
+        adjustedCritChance *= criticalChance; // scale with base chance
+
+        if (Random.value < adjustedCritChance)
         {
-            float multiplierChance = criticalChance * (attack / 3f);
-            multiplierChance = Mathf.Min(multiplierChance, 0.8f);
+            float actualMultiplier = criticalMultiplier + Random.Range(0f, 0.3f);
+            damage = Mathf.RoundToInt(damage * actualMultiplier);
+            Debug.Log($"{source} scored a CRITICAL! {damage} dmg (x{actualMultiplier:F1})");
+        }
 
-            if (Random.value < multiplierChance)
-            {
-                float actualMultiplier = criticalMultiplier + (Random.value * 0.5f);
-                damage = Mathf.RoundToInt(damage * actualMultiplier);
-                Debug.Log($"{source} triggered multiplier! {damage} damage (x{actualMultiplier:F1})");
-            }
+        // --- Track consecutive attacks ---
+        if (isPlayerAttacker)
+        {
+            consecutivePlayerAttacks++;
+            consecutiveNPCAttacks = 0;
+        }
+        else
+        {
+            consecutiveNPCAttacks++;
+            consecutivePlayerAttacks = 0;
         }
 
         return damage;
@@ -602,23 +705,15 @@ public class BattleManager : MonoBehaviour
 
         round++;
         
-        if (currentEnergy <= 0)
-        {
-            currentEnergy = 1;
-        }
-        else
-        {
-            currentEnergy = Mathf.Min(maxEnergy, currentEnergy + 1);
-        }
+        // --- PLAYER ENERGY RESET (performance-scaled) ---
+        int usedEnergy = playerAttack + playerDefend;
+        int bonusEnergy = (usedEnergy < startingEnergy) ? 1 : 0; // reward if not all used
+        currentEnergy = Mathf.Min(maxEnergy, currentEnergy + 1 + bonusEnergy);
 
-        if (npcEnergy <= 0)
-        {
-            npcEnergy = 1;
-        }
-        else
-        {
-            npcEnergy = Mathf.Min(maxEnergy, npcEnergy + 1);
-        }
+        // --- NPC ENERGY RESET (fair scaling) ---
+        int npcUsed = npcAttack + npcDefend;
+        int npcBonus = npcPassed ? 0 : (npcUsed < startingEnergy ? 1 : 0); // if NPC keeps passing, it gains less
+        npcEnergy = Mathf.Min(maxEnergy, npcEnergy + 1 + npcBonus);
 
         playerAttack = 0;
         playerDefend = 0;
@@ -626,6 +721,9 @@ public class BattleManager : MonoBehaviour
         npcAttack = 0;
         npcDefend = 0;
         npcPassed = false;
+
+        if (feedbackText != null)
+        feedbackText.text = "";
 
         UpdateUI();
         StartNewRound();
@@ -639,30 +737,44 @@ public class BattleManager : MonoBehaviour
 
         energyText.text = $"{currentEnergy}";
         roundText.text = $"Round: {round}";
-        
+
         attackButton.interactable = canAssign && currentEnergy > 0 && !isProcessingTurn;
         defendButton.interactable = canAssign && currentEnergy > 0 && !isProcessingTurn;
         passButton.interactable = canAssign && !isProcessingTurn;
-        
+
         UpdateHealthUI();
+        UpdatePassButtonLabel();
     }
+    
+        void UpdatePassButtonLabel()
+    {
+        if (passButtonText == null) return;
+
+        // If player has assigned attack or defense points, change to "End Turn"
+        if (playerAttack > 0 || playerDefend > 0)
+        {
+            passButtonText.text = endTurnLabel;
+        }
+        else
+        {
+            passButtonText.text = passLabel;
+        }
+    }
+
 
     void UpdateHealthUI()
     {
         if (playerHealthText != null)
-            playerHealthText.text = $"Player: {player.currentHealth}/{player.maxHealth}";
+            playerHealthText.text = $"{player.currentHealth}/{player.maxHealth}";
         
         if (npcHealthText != null)
-            npcHealthText.text = $"NPC: {npc.currentHealth}/{npc.maxHealth}";
+            npcHealthText.text = $"{npc.currentHealth}/{npc.maxHealth}";
     }
 
     void ShowResultPanel(string result)
     {
         resultPanel.SetActive(true);
         resultText.text = result;
-
-        // Vibrate on game end
-        Vibrate();
 
         attackButton.interactable = false;
         defendButton.interactable = false;
@@ -685,17 +797,6 @@ public class BattleManager : MonoBehaviour
         {
             Debug.LogWarning("Return scene name not set!");
         }
-    }
-
-    void Vibrate()
-    {
-        if (!vibrationsEnabled) return;
-        
-#if UNITY_ANDROID && !UNITY_EDITOR
-        Handheld.Vibrate();
-#elif UNITY_IOS && !UNITY_EDITOR
-        UnityEngine.iOS.Device.Vibrate();
-#endif
     }
 
     void OnDestroy()
